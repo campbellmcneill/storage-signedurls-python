@@ -19,6 +19,9 @@ import datetime
 import md5
 import sys
 import time
+import hashlib
+import os
+import mmap
 
 import Crypto.Hash.SHA256 as SHA256
 import Crypto.PublicKey.RSA as RSA
@@ -104,7 +107,7 @@ class CloudStorageURLSigner(object):
     base_url, query_params = self._MakeUrl('GET', path)
     return self.session.get(base_url, params=query_params)
 
-  def Put(self, path, content_type, data):
+  def Put(self, path, content_type, filename):
     """Performs a PUT request.
 
     Args:
@@ -115,15 +118,23 @@ class CloudStorageURLSigner(object):
     Returns:
       An instance of requests.Response containing the HTTP response.
     """
-    md5_digest = base64.b64encode(md5.new(data).digest())
+    print "Generating MD5"
+    md5_digest = base64.b64encode(generate_file_md5(".", filename))
     base_url, query_params = self._MakeUrl('PUT', path, content_type,
                                            md5_digest)
+    print "Generating Headers"
     headers = {}
     headers['Content-Type'] = content_type
-    headers['Content-Length'] = str(len(data))
+    headers['Content-Length'] = os.stat(filename).st_size
     headers['Content-MD5'] = md5_digest
+
+    print "Uploading File via HTTP PUT"
+    print "Create Memory Mapped File"
+    f = open(filename, "rb")
+    mmapped_file_as_string = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    print "Send the HTTP Put and return"
     return self.session.put(base_url, params=query_params, headers=headers,
-                            data=data)
+                            data=mmapped_file_as_string)
 
   def Delete(self, path):
     """Performs a DELETE request.
@@ -137,6 +148,15 @@ class CloudStorageURLSigner(object):
     base_url, query_params = self._MakeUrl('DELETE', path)
     return self.session.delete(base_url, params=query_params)
 
+def generate_file_md5(rootdir, filename, blocksize=2**20):
+    m = hashlib.md5()
+    with open( os.path.join(rootdir, filename) , "rb" ) as f:
+        while True:
+            buf = f.read(blocksize)
+            if not buf:
+                break
+            m.update( buf )
+    return m.digest()
 
 def ProcessResponse(r, expected_status=200):
   """Prints request and response information and checks for desired return code.
@@ -150,7 +170,6 @@ def ProcessResponse(r, expected_status=200):
   """
 
   print '--- Request ---'
-  """print r.request.full_url"""
   for header, value in r.request.headers.iteritems():
     print '%s: %s' % (header, value)
   print '---------------'
@@ -177,23 +196,25 @@ def main():
 
 
   try:
-    filedata = open(conf.OBJECT_NAME, 'rb').read()
+    """filedata = open(conf.OBJECT_NAME, 'rb').read()"""
+    file = open(conf.OBJECT_NAME, 'rb')
   except IOError as e:
       sys.exit('Error trying to read input file: $s' % e)
 
   print 'Creating file...'
   print '================'
-  r = signer.Put(file_path, 'application/zip', filedata)
+  """r = signer.Put(file_path, 'application/zip', filedata)"""
+  r = signer.Put(file_path, 'application/zip', conf.OBJECT_NAME)
   ProcessResponse(r)
 
-  print 'Retrieving file...'
+  """print 'Retrieving file...'
   print '=================='
   r = signer.Get(file_path)
   ProcessResponse(r)
   print 'Deleting file...'
   print '================'
   r = signer.Delete(file_path)
-  ProcessResponse(r, expected_status=204)
+  ProcessResponse(r, expected_status=204)"""
   print 'Done.'
 
 if __name__ == '__main__':
